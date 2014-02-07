@@ -42,8 +42,8 @@
 #include <secrets.h>
 #include <dbusers.h>
 
-#define USERS_QUERY_NO_ROOT " WHERE user NOT IN ('root')"
-#define LOAD_MYSQL_USERS_QUERY "SELECT user, password FROM mysql.user"
+#define USERS_QUERY_NO_ROOT " AND user NOT IN ('root')"
+#define LOAD_MYSQL_USERS_QUERY "SELECT user, password FROM mysql.user WHERE user IS NOT NULL AND user <> ''"
 
 extern int lm_enabled_logfiles_bitmask;
 
@@ -52,6 +52,7 @@ static int uh_cmpfun( void* v1, void* v2);
 static void *uh_keydup(void* key);
 static void uh_keyfree( void* key);
 static int uh_hfun( void* key);
+char *mysql_users_fetch(USERS *users, MYSQL_USER_HOST *key);
 
 /**
  * Load the user/passwd form mysql.user table into the service users' hashtable
@@ -114,9 +115,12 @@ getUsers(SERVICE *service, struct users *users)
 	char *users_query; 
 
 	if(service->enable_root)
-		users_query = LOAD_MYSQL_USERS_QUERY;
+		users_query = LOAD_MYSQL_USERS_QUERY " ORDER BY HOST DESC";
 	else
-		users_query = LOAD_MYSQL_USERS_QUERY USERS_QUERY_NO_ROOT;
+		users_query = LOAD_MYSQL_USERS_QUERY USERS_QUERY_NO_ROOT " ORDER BY HOST DESC";
+
+
+	fprintf(stderr, "MySQL users query is [%s]\n", users_query);
 	
 	serviceGetUser(service, &service_user, &service_passwd);
 	/** multi-thread environment requires that thread init succeeds. */
@@ -262,6 +266,18 @@ int     add;
 }
 
 /**
+ * Fetch the authentication data for a particular user from the users table
+ *
+ * @param users The MySQL users table
+ * @param key	The key with user@host
+ * @return	The authentication data or NULL on error
+ */
+char *mysql_users_fetch(USERS *users, MYSQL_USER_HOST *key) {
+        atomic_add(&users->stats.n_fetches, 1);
+        return hashtable_fetch(users->data, key);
+}
+
+/**
  * The hash function we use for storing MySQL users as: users@hosts.
  *
  * @param key	The key value, i.e. username@host ip4/ip6 data
@@ -316,7 +332,7 @@ static void *uh_keydup(void* key) {
 /**
  * The key free function we use for freeing the users@hosts data
  *
- * @param key	The key value, i.e. username@host ip4/ip6 data
+ * @param key	The key value, i.e. username@host ip4 data
  */
 static void uh_keyfree( void* key) {
 	MYSQL_USER_HOST *current_key = (MYSQL_USER_HOST *)key;
@@ -324,3 +340,4 @@ static void uh_keyfree( void* key) {
 	free(current_key->user);
 	free(key);
 }
+
