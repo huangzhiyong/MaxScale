@@ -48,6 +48,10 @@
 extern int lm_enabled_logfiles_bitmask;
 
 static int getUsers(SERVICE *service, struct users *users);
+static int uh_cmpfun( void* v1, void* v2);
+static void *uh_keydup(void* key);
+static void uh_keyfree( void* key);
+static int uh_hfun( void* key);
 
 /**
  * Load the user/passwd form mysql.user table into the service users' hashtable
@@ -211,7 +215,33 @@ getUsers(SERVICE *service, struct users *users)
 }
 
 /**
- * Add a new user to the user table. The user name must be unique
+ * Allocate a new MySQL users table for mysql specific users@host as key
+ *
+ *  @return The users table
+ */
+USERS *
+mysql_users_alloc()
+{
+USERS	*rval;
+
+	if ((rval = calloc(1, sizeof(USERS))) == NULL)
+		return NULL;
+
+	if ((rval->data = hashtable_alloc(52, uh_hfun, uh_cmpfun)) == NULL) {
+		free(rval);
+		return NULL;
+	}
+
+	/* the key is handled by uh_keydup/uh_keyfree.
+	* the value is a (char *): it's handled by strdup/free
+	*/
+	hashtable_memory_fns(rval->data, (HASHMEMORYFN)uh_keydup, (HASHMEMORYFN) strdup, (HASHMEMORYFN)uh_keyfree, (HASHMEMORYFN)free);
+
+	return rval;
+}
+
+/**
+ * Add a new MySQL user to the user table. The user name must be unique
  *
  * @param users		The users table
  * @param user		The user name
@@ -229,4 +259,68 @@ int     add;
 
         fprintf(stderr, ">> Adding %s\n", key->user == NULL ? "null": key->user);
         return add;
+}
+
+/**
+ * The hash function we use for storing MySQL users as: users@hosts.
+ *
+ * @param key	The key value, i.e. username@host ip4/ip6 data
+ * @return	The hash key
+ */
+
+static int uh_hfun( void* key) {
+        MYSQL_USER_HOST *hu = (MYSQL_USER_HOST *) key;
+
+        fprintf(stderr, "uh_hfun for IP is %lu, last part %lu\n", *hu->user + *(hu->user + 1) + (unsigned int) (hu->ipv4.sin_addr.s_addr & 0xFF000000)  / 0xFFFFFF, (unsigned int) (hu->ipv4.sin_addr.s_addr & 0xFF000000)  / 0xFFFFFF);
+
+        return (*hu->user + *(hu->user + 1) + (unsigned int) (hu->ipv4.sin_addr.s_addr & 0xFF000000 / (256 * 256 * 256)));
+}
+
+/**
+ * The compare function we use for compare MySQL users as: users@hosts.
+ *
+ * @param key1	The key value, i.e. username@host ip4/ip6 data
+ * @param key1	The key value, i.e. username@host ip4/ip6 data
+ * @return	The compare value
+ */
+
+static int uh_cmpfun( void* v1, void* v2) {
+	MYSQL_USER_HOST *hu1 = (MYSQL_USER_HOST *) v1;
+	MYSQL_USER_HOST *hu2 = (MYSQL_USER_HOST *) v2;
+
+	if (strcmp(hu1->user, hu2->user) == 0 && (hu1->ipv4.sin_addr.s_addr == hu2->ipv4.sin_addr.s_addr)) {
+		fprintf(stderr, "uh_cmpfun returns 0\n");
+		return 0;
+	} else {
+		fprintf(stderr, "uh_cmpfun returns 1\n");
+		return 1;
+	}
+}
+
+/**
+ *The key dup function we use for duplicate the users@hosts.
+ *
+ * @param key	The key value, i.e. username@host ip4/ip6 data
+ */
+
+static void *uh_keydup(void* key) {
+	MYSQL_USER_HOST *rval = (MYSQL_USER_HOST *) calloc(1, sizeof(MYSQL_USER_HOST));
+	MYSQL_USER_HOST *current_key = (MYSQL_USER_HOST *)key;
+
+	rval->user = strdup(current_key->user);
+	memcpy(&rval->ipv4, &current_key->ipv4, sizeof(struct sockaddr_in));
+
+	return (void *) rval;
+}
+
+/**
+ * The key free function we use for freeing the users@hosts data
+ *
+ * @param key	The key value, i.e. username@host ip4/ip6 data
+ */
+static void uh_keyfree( void* key) {
+	MYSQL_USER_HOST *current_key = (MYSQL_USER_HOST *)key;
+
+	free(current_key->user);
+	free(key);
 }
