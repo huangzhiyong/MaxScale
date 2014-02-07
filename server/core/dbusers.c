@@ -26,6 +26,7 @@
  * 24/06/2013	Massimiliano Pinto	Initial implementation
  * 08/08/2013	Massimiliano Pinto	Fixed bug for invalid memory access in row[1]+1 when row[1] is ""
  * 06/02/2014	Massimiliano Pinto	Mysql user root selected based on configuration flag
+ * 07/02/2014	Massimiliano Pinto	Added Mysql user@host authentication
  *
  * @endverbatim
  */
@@ -39,6 +40,7 @@
 #include <skygw_utils.h>
 #include <log_manager.h>
 #include <secrets.h>
+#include <dbusers.h>
 
 #define USERS_QUERY_NO_ROOT " WHERE user NOT IN ('root')"
 #define LOAD_MYSQL_USERS_QUERY "SELECT user, password FROM mysql.user"
@@ -206,4 +208,25 @@ getUsers(SERVICE *service, struct users *users)
 	mysql_close(con);
 	mysql_thread_end();
 	return total_users;
+}
+
+/**
+ * Add a new user to the user table. The user name must be unique
+ *
+ * @param users		The users table
+ * @param user		The user name
+ * @param auth		The authentication data
+ * @return		The number of users added to the table
+ */
+int
+mysql_users_add(USERS *users, MYSQL_USER_HOST *key, char *auth)
+{
+int     add;
+
+        atomic_add(&users->stats.n_adds, 1);
+        add = hashtable_add(users->data, key, auth);
+        atomic_add(&users->stats.n_entries, add);
+
+        fprintf(stderr, ">> Adding %s\n", key->user == NULL ? "null": key->user);
+        return add;
 }
