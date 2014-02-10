@@ -229,7 +229,7 @@ getUsers(SERVICE *service, struct users *users)
 			inet_ntop(AF_INET, &(serv_addr).sin_addr, ret_ip, INET_ADDRSTRLEN);
 
 			LOGIF(LD, (skygw_log_write_flush(
-				LOGFILE_ERROR,
+				LOGFILE_DEBUG,
 				"%lu [mysql_users_add()] Added user %s@%s(%s)\n",
 				pthread_self(),
 				row[0],
