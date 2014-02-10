@@ -43,7 +43,7 @@
 #include <dbusers.h>
 
 #define USERS_QUERY_NO_ROOT " AND user NOT IN ('root')"
-#define LOAD_MYSQL_USERS_QUERY "SELECT user, password FROM mysql.user WHERE user IS NOT NULL AND user <> ''"
+#define LOAD_MYSQL_USERS_QUERY "SELECT user, host, password FROM mysql.user WHERE user IS NOT NULL AND user <> ''"
 
 extern int lm_enabled_logfiles_bitmask;
 
@@ -80,7 +80,7 @@ reload_mysql_users(SERVICE *service)
 int		i;
 struct users	*newusers, *oldusers;
 
-	if ((newusers = users_alloc()) == NULL)
+	if ((newusers = mysql_users_alloc()) == NULL)
 		return 0;
 	i = getUsers(service, newusers);
 	spinlock_acquire(&service->spin);
@@ -112,7 +112,9 @@ getUsers(SERVICE *service, struct users *users)
 	char	   *dpwd;
 	int        total_users = 0;
 	SERVER	   *server;
-	char *users_query; 
+	struct sockaddr_in serv_addr;
+	MYSQL_USER_HOST key;
+	char *users_query;
 
 	if(service->enable_root)
 		users_query = LOAD_MYSQL_USERS_QUERY " ORDER BY HOST DESC";
@@ -209,7 +211,26 @@ getUsers(SERVICE *service, struct users *users)
                  * user and passwd+1 (escaping the first byte that is '*') are
                  * added to hashtable.
                  */
-		users_add(users, row[0], strlen(row[1]) ? row[1]+1 : row[1]);
+		
+		/* prepare the user@host data struct */
+		memset(&serv_addr, 0, sizeof(serv_addr));
+		memset(&key, 0, sizeof(key));
+
+		/* if host == %, 0 is passed */
+		fprintf(stderr, "reading host [%s], to be [%s]\n", row[1], strcmp(row[1], "%") ? row[1] : "0.0.0.0");
+
+		setipaddress(&serv_addr.sin_addr, strcmp(row[1], "%") ? row[1] : "0.0.0.0");
+
+		key.user = strdup(row[0]);
+
+		memcpy(&key.ipv4, &serv_addr, sizeof(serv_addr));
+
+		fprintf(stderr, "=== Try adding %s, %lu = [%s]\n", key.user, key.ipv4.sin_addr.s_addr, row[2]);
+		fprintf(stderr, "Address [%s]: %u.%u.%u.%u\n", row[1], serv_addr.sin_addr.s_addr&0xFF, (serv_addr.sin_addr.s_addr&0xFF00), (serv_addr.sin_addr.s_addr&0xFF0000), (serv_addr.sin_addr.s_addr & 0xFF000000));
+
+		/* add user@host as key and passwd as value in the MySQL users hash table */
+		mysql_users_add(users, &key, strlen(row[2]) ? row[2]+1 : row[2]);
+
 		total_users++;
 	}
 	mysql_free_result(result);
@@ -287,7 +308,7 @@ char *mysql_users_fetch(USERS *users, MYSQL_USER_HOST *key) {
 static int uh_hfun( void* key) {
         MYSQL_USER_HOST *hu = (MYSQL_USER_HOST *) key;
 
-        fprintf(stderr, "uh_hfun for IP is %lu, last part %lu\n", *hu->user + *(hu->user + 1) + (unsigned int) (hu->ipv4.sin_addr.s_addr & 0xFF000000)  / 0xFFFFFF, (unsigned int) (hu->ipv4.sin_addr.s_addr & 0xFF000000)  / 0xFFFFFF);
+        fprintf(stderr, "uh_hfun for IP is %lu, last part %lu\n", *hu->user + *(hu->user + 1) + (unsigned int) (hu->ipv4.sin_addr.s_addr & 0xFF000000)  / 0xFFFFFF, (unsigned int) (hu->ipv4.sin_addr.s_addr & 0xFF000000));
 
         return (*hu->user + *(hu->user + 1) + (unsigned int) (hu->ipv4.sin_addr.s_addr & 0xFF000000 / (256 * 256 * 256)));
 }

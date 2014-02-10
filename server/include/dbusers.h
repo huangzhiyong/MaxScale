@@ -44,4 +44,5 @@ typedef struct mysql_user_host_key {
 extern int load_mysql_users(SERVICE *service);
 extern int reload_mysql_users(SERVICE *service);
 extern int mysql_users_add(USERS *users, MYSQL_USER_HOST *key, char *auth);
+extern USERS *mysql_users_alloc();
 #endif

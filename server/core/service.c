@@ -78,7 +78,7 @@ SERVICE 	*service;
 	service->state = SERVICE_STATE_ALLOC;
 	service->credentials.name = NULL;
 	service->credentials.authdata = NULL;
-	service->users = users_alloc();
+	//service->users = users_alloc();
 	service->enable_root = 0;
 	service->routerOptions = NULL;
 	service->databases = NULL;
@@ -113,11 +113,17 @@ GWPROTOCOL	*funcs;
 		return 0;
 	}
 	if (strcmp(port->protocol, "MySQLClient") == 0) {
-		int loaded = load_mysql_users(service);
+		int loaded;
+		/* Allocate specific data for MySQL users */
+		service->users = mysql_users_alloc();
+		loaded = load_mysql_users(service);
 		LOGIF(LM, (skygw_log_write(
                         LOGFILE_MESSAGE,
                         "Loaded %d MySQL Users.",
                         loaded)));
+	} else {
+		/* Generic users table */
+		service->users = users_alloc();
 	}
 
 	if ((funcs =

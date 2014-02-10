@@ -1099,15 +1099,33 @@ int gw_check_mysql_scramble_data(DCB *dcb, uint8_t *token, unsigned int token_le
 
 int gw_find_mysql_user_password_sha1(char *username, uint8_t *gateway_password, void *repository) {
         SERVICE *service = NULL;
+	struct sockaddr_in *client;
         char *user_password = NULL;
+	DCB *dcb = (DCB *)repository;
+	MYSQL_USER_HOST key;
 
-        service = (SERVICE *) ((DCB *)repository)->service;
+	service = (SERVICE *) ((DCB *)repository)->service;
+	client = (struct sockaddr_in *) &dcb->ipv4;
 
-        user_password = (char *)users_fetch(service->users, username);
+	key.user = username;
+	memcpy(&key.ipv4, client, sizeof(struct sockaddr_in));
+
+        fprintf(stderr, "Checking authentication for %s@%s (IPv4 is %lu)\n", key.user, dcb->remote, key.ipv4.sin_addr.s_addr);
+
+	/* lookk for user@current_host now */
+        user_password = (char *)users_fetch(service->users, &key);
 
         if (!user_password) {
-                return 1;
-        }
+		memset(&key.ipv4, 0, sizeof(struct sockaddr_in));
+
+		fprintf(stderr, "Checking wildcard (%%) authentication for %s@%s (IPv4 is %lu)\n", key.user, dcb->remote, key.ipv4.sin_addr.s_addr);
+		/* look for wildcard user@%, and then fail if no match */
+		user_password = (char *)users_fetch(service->users, &key);
+     
+		if (!user_password) {
+			return 1;
+		}
+	}
 
         /*<
 	 * Convert now the hex data (40 bytes) to binary (20 bytes).
