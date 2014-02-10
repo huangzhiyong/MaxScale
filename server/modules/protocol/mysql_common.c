@@ -25,6 +25,7 @@
  * 02/06/2013	Massimiliano Pinto	MySQL connect asynchronous phases
  * 04/09/2013	Massimiliano Pinto	Added dcb NULL assert in mysql_send_custom_error
  * 12/09/2013	Massimiliano Pinto	Added checks in gw_decode_mysql_server_handshake and gw_read_backend_handshake
+ * 10/02/2014	Massimiliano Pinto	Added MySQL Authentication with user@host
  *
  */
 
@@ -1110,19 +1111,39 @@ int gw_find_mysql_user_password_sha1(char *username, uint8_t *gateway_password, 
 	key.user = username;
 	memcpy(&key.ipv4, client, sizeof(struct sockaddr_in));
 
-        fprintf(stderr, "Checking authentication for %s@%s (IPv4 is %lu)\n", key.user, dcb->remote, key.ipv4.sin_addr.s_addr);
+	LOGIF(LD,
+		(skygw_log_write_flush(
+			LOGFILE_DEBUG,
+			"%lu [MySQL Client Auth], checking user [%s@%s]",
+			pthread_self(),
+			key.user,
+			dcb->remote)));
 
 	/* lookk for user@current_host now */
-        user_password = (char *)users_fetch(service->users, &key);
+        user_password = mysql_users_fetch(service->users, &key);
 
         if (!user_password) {
 		memset(&key.ipv4, 0, sizeof(struct sockaddr_in));
 
-		fprintf(stderr, "Checking wildcard (%%) authentication for %s@%s (IPv4 is %lu)\n", key.user, dcb->remote, key.ipv4.sin_addr.s_addr);
+		LOGIF(LD,
+			(skygw_log_write_flush(
+				LOGFILE_DEBUG,
+				"%lu [MySQL Client Auth], checking user [%s@%s] with wildcard host [%%]",
+				pthread_self(),
+				key.user,
+				dcb->remote)));
+
 		/* look for wildcard user@%, and then fail if no match */
-		user_password = (char *)users_fetch(service->users, &key);
+		user_password = mysql_users_fetch(service->users, &key);
      
 		if (!user_password) {
+			LOGIF(LD,
+				(skygw_log_write_flush(
+					LOGFILE_DEBUG,
+					"%lu [MySQL Client Auth], user [%s@%s] not existent",
+					pthread_self(),
+					key.user,
+					dcb->remote)));
 			return 1;
 		}
 	}
