@@ -117,15 +117,15 @@ getUsers(SERVICE *service, struct users *users)
 	MYSQL_USER_HOST key;
 	char *users_query;
 
-	if(service->enable_root)
+	/* enable_root for MySQL protocol module means load the root user credentials from backend databases */
+	if(service->enable_root) {
 		users_query = LOAD_MYSQL_USERS_QUERY " ORDER BY HOST DESC";
-	else
+	} else {
 		users_query = LOAD_MYSQL_USERS_QUERY USERS_QUERY_NO_ROOT " ORDER BY HOST DESC";
+	}
 
-
-	fprintf(stderr, "MySQL users query is [%s]\n", users_query);
-	
 	serviceGetUser(service, &service_user, &service_passwd);
+
 	/** multi-thread environment requires that thread init succeeds. */
 	if (mysql_thread_init()) {
 		LOGIF(LE, (skygw_log_write_flush(
@@ -171,6 +171,7 @@ getUsers(SERVICE *service, struct users *users)
                 server = server->nextdb;
 	}
 	free(dpwd);
+
 	if (server == NULL)
 	{
 		LOGIF(LE, (skygw_log_write_flush(
@@ -206,7 +207,7 @@ getUsers(SERVICE *service, struct users *users)
 	}
 	num_fields = mysql_num_fields(result);
  
-	while ((row = mysql_fetch_row(result))) { 
+	while ((row = mysql_fetch_row(result))) {
 		char ret_ip[INET_ADDRSTRLEN]="";
 		/**
                  * Two fields should be returned.
@@ -219,24 +220,38 @@ getUsers(SERVICE *service, struct users *users)
 		memset(&key, 0, sizeof(key));
 
 		/* if host == %, 0 is passed */
-		fprintf(stderr, "reading host [%s], to be [%s]\n", row[1], strcmp(row[1], "%") ? row[1] : "0.0.0.0");
+		if (setipaddress(&serv_addr.sin_addr, strcmp(row[1], "%") ? row[1] : "0.0.0.0")) {
 
-		setipaddress(&serv_addr.sin_addr, strcmp(row[1], "%") ? row[1] : "0.0.0.0");
+			key.user = strdup(row[0]);
 
-		key.user = strdup(row[0]);
+			memcpy(&key.ipv4, &serv_addr, sizeof(serv_addr));
 
-		memcpy(&key.ipv4, &serv_addr, sizeof(serv_addr));
+			inet_ntop(AF_INET, &(serv_addr).sin_addr, ret_ip, INET_ADDRSTRLEN);
 
-		fprintf(stderr, "=== Try adding %s, %lu = [%s]\n", key.user, key.ipv4.sin_addr.s_addr, row[2]);
+			LOGIF(LD, (skygw_log_write_flush(
+				LOGFILE_ERROR,
+				"%lu [mysql_users_add()] Added user %s@%s(%s)\n",
+				pthread_self(),
+				row[0],
+				row[1],
+				ret_ip == NULL ? "NULL" : ret_ip)));
 
-		inet_ntop(AF_INET, &(serv_addr).sin_addr, ret_ip, INET_ADDRSTRLEN);
-		fprintf(stderr, "Address [%s] is also [%s]\n", row[1], ret_ip == NULL ? "NULL" : ret_ip);
-		fprintf(stderr, "Address [%s]: %u.%u.%u.%u\n", row[1], serv_addr.sin_addr.s_addr&0xFF, (serv_addr.sin_addr.s_addr&0xFF00), (serv_addr.sin_addr.s_addr&0xFF0000), (serv_addr.sin_addr.s_addr & 0xFF000000));
+			//fprintf(stderr, "Address [%s]: %u.%u.%u.%u\n", row[1], serv_addr.sin_addr.s_addr&0xFF, (serv_addr.sin_addr.s_addr&0xFF00), (serv_addr.sin_addr.s_addr&0xFF0000), (serv_addr.sin_addr.s_addr & 0xFF000000));
 
-		/* add user@host as key and passwd as value in the MySQL users hash table */
-		mysql_users_add(users, &key, strlen(row[2]) ? row[2]+1 : row[2]);
+			/* add user@host as key and passwd as value in the MySQL users hash table */
+			mysql_users_add(users, &key, strlen(row[2]) ? row[2]+1 : row[2]);
 
-		total_users++;
+			total_users++;
+		} else {
+			/* setipaddress() failed, skip user add and log this*/
+			LOGIF(LE, (skygw_log_write_flush(
+				LOGFILE_ERROR,
+				"%lu [mysql_users_add()] setipaddress failed: user NOT added %s@%s(%s)\n",
+				pthread_self(),
+				row[0],
+				row[1],
+				ret_ip == NULL ? "NULL" : ret_ip)));
+		}
 	}
 	mysql_free_result(result);
 	mysql_close(con);
@@ -290,7 +305,6 @@ int     add;
         add = hashtable_add(users->data, key, auth);
         atomic_add(&users->stats.n_entries, add);
 
-        fprintf(stderr, ">> Adding %s\n", key->user == NULL ? "null": key->user);
         return add;
 }
 
@@ -316,9 +330,11 @@ char *mysql_users_fetch(USERS *users, MYSQL_USER_HOST *key) {
 static int uh_hfun( void* key) {
         MYSQL_USER_HOST *hu = (MYSQL_USER_HOST *) key;
 
-        fprintf(stderr, "uh_hfun for IP is %lu, last part %lu\n", *hu->user + *(hu->user + 1) + (unsigned int) (hu->ipv4.sin_addr.s_addr & 0xFF000000)  / 0xFFFFFF, (unsigned int) (hu->ipv4.sin_addr.s_addr & 0xFF000000));
-
-        return (*hu->user + *(hu->user + 1) + (unsigned int) (hu->ipv4.sin_addr.s_addr & 0xFF000000 / (256 * 256 * 256)));
+	if (key == NULL || hu == NULL) {
+		return 0;
+	} else {
+        	return (*hu->user + *(hu->user + 1) + (unsigned int) (hu->ipv4.sin_addr.s_addr & 0xFF000000 / (256 * 256 * 256)));
+	}
 }
 
 /**
@@ -334,10 +350,8 @@ static int uh_cmpfun( void* v1, void* v2) {
 	MYSQL_USER_HOST *hu2 = (MYSQL_USER_HOST *) v2;
 
 	if (strcmp(hu1->user, hu2->user) == 0 && (hu1->ipv4.sin_addr.s_addr == hu2->ipv4.sin_addr.s_addr)) {
-		fprintf(stderr, "uh_cmpfun returns 0\n");
 		return 0;
 	} else {
-		fprintf(stderr, "uh_cmpfun returns 1\n");
 		return 1;
 	}
 }

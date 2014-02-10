@@ -295,5 +295,5 @@ int  gw_hex2bin(uint8_t *out, const char *in, unsigned int len);
 int  gw_generate_random_str(char *output, int len);
 char *gw_strend(register const char *s);
 int  setnonblocking(int fd);
-void setipaddress(struct in_addr *a, char *p);
+int setipaddress(struct in_addr *a, char *p);
 int  gw_read_gwbuff(DCB *dcb, GWBUF **head, int b);
