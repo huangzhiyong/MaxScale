@@ -53,6 +53,7 @@ static void *uh_keydup(void* key);
 static void uh_keyfree( void* key);
 static int uh_hfun( void* key);
 char *mysql_users_fetch(USERS *users, MYSQL_USER_HOST *key);
+char *mysql_users_print(void *data);
 
 /**
  * Load the user/passwd form mysql.user table into the service users' hashtable
@@ -206,6 +207,7 @@ getUsers(SERVICE *service, struct users *users)
 	num_fields = mysql_num_fields(result);
  
 	while ((row = mysql_fetch_row(result))) { 
+		char ret_ip[INET_ADDRSTRLEN]="";
 		/**
                  * Two fields should be returned.
                  * user and passwd+1 (escaping the first byte that is '*') are
@@ -226,6 +228,9 @@ getUsers(SERVICE *service, struct users *users)
 		memcpy(&key.ipv4, &serv_addr, sizeof(serv_addr));
 
 		fprintf(stderr, "=== Try adding %s, %lu = [%s]\n", key.user, key.ipv4.sin_addr.s_addr, row[2]);
+
+		inet_ntop(AF_INET, &(serv_addr).sin_addr, ret_ip, INET_ADDRSTRLEN);
+		fprintf(stderr, "Address [%s] is also [%s]\n", row[1], ret_ip == NULL ? "NULL" : ret_ip);
 		fprintf(stderr, "Address [%s]: %u.%u.%u.%u\n", row[1], serv_addr.sin_addr.s_addr&0xFF, (serv_addr.sin_addr.s_addr&0xFF00), (serv_addr.sin_addr.s_addr&0xFF0000), (serv_addr.sin_addr.s_addr & 0xFF000000));
 
 		/* add user@host as key and passwd as value in the MySQL users hash table */
@@ -256,6 +261,9 @@ USERS	*rval;
 		free(rval);
 		return NULL;
 	}
+
+	/* set the MySQL user@host print routine for the debug interface */
+	rval->usersCustomUserPrint = mysql_users_print;
 
 	/* the key is handled by uh_keydup/uh_keyfree.
 	* the value is a (char *): it's handled by strdup/free
@@ -362,3 +370,39 @@ static void uh_keyfree( void* key) {
 	free(key);
 }
 
+/**
+ * Print details of the mysql_users storage mechanism to a DCB
+ *
+ *  @param data		Input data
+ *  @return 		the MySQL user@host
+ */
+char *mysql_users_print(void *data)
+{
+	MYSQL_USER_HOST *entry;
+	char *mysql_user;
+	/* the returned user string is "USER@HOST" */
+	int mysql_user_len = 128 + 1 + INET_ADDRSTRLEN + 1;
+
+	if (data == NULL)
+		return NULL;
+	
+        entry = (MYSQL_USER_HOST *) data;
+
+	if (entry == NULL)
+		return NULL;
+
+	mysql_user = (char *) calloc(mysql_user_len, sizeof(char));
+
+	if (mysql_user == NULL)
+		return NULL;
+	
+	if (entry->ipv4.sin_addr.s_addr == INADDR_ANY) {
+		snprintf(mysql_user, mysql_user_len, "%s@%%", entry->user);
+	} else {
+		snprintf(mysql_user, 128, entry->user);
+		strcat(mysql_user, "@");
+		inet_ntop(AF_INET, &(entry->ipv4).sin_addr, mysql_user+strlen(mysql_user), INET_ADDRSTRLEN);
+	}
+
+        return mysql_user;
+}

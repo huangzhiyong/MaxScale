@@ -48,8 +48,9 @@ typedef struct {
  * for the authentication implementation within the gateway.
  */
 typedef struct users {
-	HASHTABLE	*data;		/**< The hashtable containing the actual data */
-	USERS_STATS	stats;		/**< The statistics for the users table */
+	HASHTABLE	*data;			/**< The hashtable containing the actual data */
+        char *(*usersCustomUserPrint)(void *);	/**< Optional username print routine */	
+	USERS_STATS	stats;			/**< The statistics for the users table */
 } USERS;
 
 extern USERS	*users_alloc();				/**< Allocate a users table */
